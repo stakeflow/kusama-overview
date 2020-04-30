@@ -1,0 +1,68 @@
+.syncStatus {
+  font-family: 'PT Mono', monospace;
+  position: fixed;
+  bottom: -75px;
+  width: 720px;
+  z-index: 9;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #b0bbcc;
+  border-radius: 7px;
+  padding: 3px;
+  opacity: 0.2;
+  cursor: default;
+
+  transition: all 1s 1s;
+
+  &.visible {
+    opacity: 1;
+    bottom: 27px;
+  }
+
+  .syncProgressOuter {
+    width: 100%;
+    border-radius: 7px;
+    position: relative;
+    height: 28px;
+    background: #232323;
+
+    .syncProgressInner {
+      height: 28px;
+      border-radius: 7px;
+      position: absolute;
+      top: 0;
+      background-image: linear-gradient(45deg, rgba(255,255,255,.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,.15) 50%, rgba(255,255,255,.15) 75%, transparent 75%, transparent);
+      background-color: #2B2D3E;
+      background-size: 1rem 1rem;
+
+      animation: progress 1s linear infinite;
+    }
+
+    @keyframes progress {
+      0% {
+        background-position: 1rem 0;
+      }
+      100% {
+        background-position: 0 0;
+      }
+    }
+    
+    .blocksCounter {
+      text-align: center;
+      font-size: 0.75em;
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      z-index: 5;
+      position: absolute;
+      top: 5px;
+      color: #fff;
+      
+      span {
+        background: rgba(35, 35, 35, 0.75);
+        padding: 1px 6px;
+        border-radius: 5px;
+      }
+    }
+  }
+}

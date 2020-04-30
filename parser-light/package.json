@@ -1,0 +1,15 @@
+{
+  "name": "kusama-overview-parser-light",
+  "author": "genesis-lab-team",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "node ./src/index.js"
+  },
+  "dependencies": {
+    "@polkadot/api": "^1.8.0-beta",
+    "axios": "^0.19.2",
+    "dotenv": "^8.2.0",
+    "jsbi": "^3.1.2",
+    "mongoose": "^5.9"
+  }
+}

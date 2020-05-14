@@ -15,8 +15,8 @@
       <p class="data" v-if="appState.block !== undefined">{{ $h.formatNumber(appState.block, 0) }}</p>
       <p class="data" v-else>-</p>
     </div>
-    <div class="networkDataItem epoch">
-      <p class="title">Epoch</p>
+    <div class="networkDataItem session">
+      <p class="title">Session</p>
       <p class="data" v-if="appState.sessionIndex !== undefined">{{ $h.formatNumber(appState.sessionIndex, 0) }}</p>
       <p class="data" v-else>-</p>
     </div>

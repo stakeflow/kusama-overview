@@ -7,7 +7,7 @@ class MongoConnection {
     this.connectionString = connectionString;
 
     // Connect
-    await mongoose.connect(connectionString, {useNewUrlParser: true, useUnifiedTopology: true});
+    await mongoose.connect(connectionString, { auto_reconnect: true, useNewUrlParser: true, useUnifiedTopology: true });
     this.setupTriggers(mongoose.connection);
 
     // Close connection if SIGINT or SIGTERM appear

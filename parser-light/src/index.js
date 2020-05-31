@@ -118,171 +118,139 @@ function updateNodesData(api) {
 
     try {
 
-      let sessionValidators = await api.query.session.validators().then(validators => validators);
-
-      let imOnlineV = await api.derive.imOnline.receivedHeartbeats();
-
-      let sessionIndexes = await api.derive.session.indexes();
+      // Collect required data
+      let [sessionValidators, heartbeats, sessionIndexes, stackingOverview, networkNodes] = await Promise.all([
+        api.query.session.validators(),
+        api.derive.imOnline.receivedHeartbeats(),
+        api.derive.session.indexes(),
+        api.derive.staking.overview(),
+        api.derive.staking.stashes()
+      ]);
       let currentSessionIndex = sessionIndexes.currentIndex;
+      let nextElected = stackingOverview.nextElected;
 
-      let overview = await api.derive.staking.overview();
-      let nextElected = overview.nextElected;
+      // Collect the accounts information for all network nodes
+      let accountsInfo = await Promise.all(networkNodes.map(candidate => api.derive.staking.account(candidate)));
 
-      await api.derive.staking.stashes().then(async candidates => {
+      // Update app state (validators and candidates number)
+      let state = await State.findOne();
+      state.activeValidators = sessionValidators.length;
+      state.candidates = networkNodes.length - sessionValidators.length;
+      await state.save();
 
-        // Update app state (validators and candidates number)
-        let state = await State.findOne();
-        state.activeValidators = sessionValidators.length;
-        state.candidates = candidates.length - sessionValidators.length;
-        await state.save();
+      // Update data for every network node
+      for await (let [i, stashAddress] of networkNodes.entries()) {
 
-        // Retrieve the balances for all validators
-        let accountArr = await Promise.all(candidates.map(candidate => api.derive.staking.account(candidate)));
+        // Find the node in DB or create the new one
+        await Validator.findOne({ stashAddress: stashAddress.toString() }).then(async node => {
 
-        // Collect candidates stashes to clean up nodes db later
-        let candidatesStashes = [];
-
-        for await (let [i, stashAddress] of candidates.entries()) {
-
-          candidatesStashes.push(stashAddress.toString());
-
-          // Init candidate/validator data
-          let validator = {
-            controlAddress: accountArr[i].controllerId.toString(),
-            stashAddress: stashAddress.toString(),
-            commission: accountArr[i].validatorPrefs.commission.toNumber() / 10000000,
-            nominators: [],
-            historicalData: {
-              points: [],
-              slashes: []
-            }
-          };
-
-          let stakerPointsNot0 = [];
-
-          if (sessionValidators.some(sv => sv.toString() === validator.stashAddress)) {
-            validator.status = 1;
-
-            let authoredBlocks = await api.query.imOnline.authoredBlocks(currentSessionIndex, validator.stashAddress.toString());
-            validator.authoredBlocks = authoredBlocks.toNumber();
-
-            let stakerPoints = await api.derive.staking.stakerPoints(validator.stashAddress.toString(), true);
-            validator.points = stakerPoints[stakerPoints.length - 1].points.toNumber();
-            stakerPointsNot0 = stakerPoints.filter(item => item.points.toNumber() > 0);
-            //validator.averagePoints = stakerPoints.reduce((sum, current) => sum + current.points.toNumber(), 0) / stakerPoints.length;
-
-            // if (validator.points < stakerPoints[stakerPoints.length - 2].points.toNumber()) {
-            //   validator.pointsDown = true;
-            // } else {
-            //   validator.pointsDown = false;
-            // }
-
-            validator.heartbeats = imOnlineV[validator.stashAddress.toString()].hasMessage
-
-          } else {
-            validator.points = 0;
-            validator.heartbeats = false;
-            validator.authoredBlocks = 0;
-            validator.status = 2;
+          if (node === null) {
+            node = new Validator({
+              controlAddress: accountsInfo[i].controllerId.toString(),
+              stashAddress: stashAddress.toString(),
+              commission: accountsInfo[i].validatorPrefs.commission.toNumber() / 10000000,
+              nominators: [],
+              historicalData: {
+                points: [],
+                slashes: []
+              }
+            });
           }
 
-          let ownSlashes = await api.derive.staking.ownSlashes(validator.stashAddress.toString(), true);
-          let valSlashes = ownSlashes.filter(item => item.total.toNumber() > 0);
-          validator.downTimeSlashCounter84Eras = valSlashes.length;
+          // Get Era Points and Slashes historical data for node
+          let eraPointsHistory = await api.derive.staking.stakerPoints(node.stashAddress, true);
+          let slashesHistory = await api.derive.staking.ownSlashes(node.stashAddress, true);
 
-          if (nextElected.find(item => item.toString() === validator.stashAddress) !== undefined) {
-            validator.nextSessionElected = true;
-            //debugger;
+          // Get account exposure for node
+          let exposure = accountsInfo[i].exposure.toJSON();
+
+          // Check node status (validator or candidate) and update it with the new data
+          if (sessionValidators.some(sv => sv.toString() === node.stashAddress)) {
+            node.status = 1;
+            node.authoredBlocks = await api.query.imOnline.authoredBlocks(currentSessionIndex, node.stashAddress).then(authoredBlocks => authoredBlocks.toNumber());
+            node.points = eraPointsHistory[eraPointsHistory.length - 1].points.toNumber();
+            node.heartbeats = heartbeats[node.stashAddress].hasMessage;
           } else {
-            validator.nextSessionElected = false;
-            //debugger;
+            node.status = 2;
+            node.authoredBlocks = 0;
+            node.points = 0;
+            node.heartbeats = false;
           }
 
-          let exposure = accountArr[i].exposure.toJSON();
+          // Check the number of slashes for node
+          node.downTimeSlashCounter84Eras = slashesHistory.filter(item => item.total.toNumber() > 0).length;
 
-          let stakeOwn = JSBI.BigInt(exposure.own);
+          // Check is node elected for next session or not
+          node.nextSessionElected = nextElected.find(item => item.toString() === node.stashAddress) !== undefined;
 
-          let stakeTotal = stakeOwn;
+          // Reset node nominators list and total stake value
+          node.nominators = [];
+          node.stakeTotal = "0";
+
+          // Update node's own stake
+          node.stakeOwn = exposure.own;
+
+          // Add node's own stash as a nominator and add it's stake to totalStake
+          node.nominators.push({
+            address: node.stashAddress,
+            stake: exposure.own
+          });
+          node.stakeTotal = String(JSBI.add(JSBI.BigInt(exposure.own), JSBI.BigInt(node.stakeTotal)));
+
+          // Add node nominators and update total stake
+          let nominatorsTotalStake = JSBI.BigInt("0");
           exposure.others.forEach(nominator => {
-            validator.nominators.push({
+            node.nominators.push({
               address: nominator.who,
               stake: nominator.value
             });
-            stakeTotal = JSBI.add(JSBI.BigInt(nominator.value), stakeTotal);
+            nominatorsTotalStake = JSBI.add(JSBI.BigInt(nominator.value), nominatorsTotalStake);
           });
+          node.stakeTotal = String(JSBI.add(JSBI.BigInt(node.stakeTotal), nominatorsTotalStake));
 
-          validator.stakeTotal = String(stakeTotal);
-          validator.stakeOwn = String(stakeOwn);
-
-          await Validator.findOne({ stashAddress: validator.stashAddress }).then(async v => {
-            if (v === null) {
-
-              validator = addValidatorPoints(stakerPointsNot0, validator);
-
-              validator = addValidatorSlashes(valSlashes, validator);
-
-              // Add
-              validator = new Validator(validator);
-
-              try {
-                await validator.save();
-              } catch (err) {
-                console.log(err);
-              }
-            } else {
-              let maxSavedPointsEra = 0;
-
-              if (v.historicalData != undefined){
-                if (v.historicalData.points != undefined) {
-                  validator = addValidatorPoints(v.historicalData.points, validator);
-                  if (v.historicalData.points.length > 0) {
-                    maxSavedPointsEra = v.historicalData.points[v.historicalData.points.length - 1].era.toNumber();
-                  }
-                }
-              }
-
-              let stakerPointsMoreMaxEra = stakerPointsNot0.filter(item => item.era.toNumber() > maxSavedPointsEra);
-              validator = addValidatorPoints(stakerPointsMoreMaxEra, validator);
-
-
-              let maxSavedSlashesEra = 0;
-              if (v.historicalData != undefined){
-                if (v.historicalData.slashes != undefined) {
-                  validator = addValidatorSlashes(v.historicalData.slashes, validator);
-                  if (v.historicalData.slashes.length > 0) {
-                    maxSavedSlashesEra = v.historicalData.slashes[v.historicalData.slashes.length - 1].era.toNumber();
-                  }
-                }
-              }
-
-              let slashesMoreMaxEra = valSlashes.filter(item => item.era.toNumber() > maxSavedSlashesEra);
-              validator = addValidatorSlashes(slashesMoreMaxEra, validator);
-
-              // Update
-              try {
-                await v.updateOne(validator);
-              } catch (err) {
-                console.log(err);
-              }
+          // Update Era Points historical data
+          eraPointsHistory.forEach(pointsPerEra => {
+            if (!node.historicalData.points.some(ep => ep.era === pointsPerEra.era.toNumber())) {
+              node.historicalData.points.push({
+                era: pointsPerEra.era.toNumber(),
+                points: pointsPerEra.points.toNumber()
+              });
             }
           });
 
-        }
+          // Update Slashes historical data
+          slashesHistory.forEach(slashesPerEra => {
+            if (!node.historicalData.slashes.some(es => es.era === slashesPerEra.era.toNumber())) {
+              node.historicalData.slashes.push({
+                era: slashesPerEra.era.toNumber(),
+                total: slashesPerEra.total.toNumber()
+              });
+            }
+          });
 
-        // Clean up db nodes list
-        await Validator.find({}, async (err, validators) => {
-          if (err) {
+          // Save node in DB
+          try {
+            await node.save();
+          } catch (err) {
             console.log(err);
           }
-          for await (let v of validators) {
-            if (!candidatesStashes.includes(v.stashAddress)) {
-              v.remove();
-            }
-          }
         });
+      }
 
+      // Clean up DB nodes list
+      let networkNodesStashAddresses = networkNodes.map(node => node.toString());
+      await Validator.find({}, async (err, validators) => {
+        if (err) {
+          console.log(err);
+        }
+        for await (let v of validators) {
+          if (!networkNodesStashAddresses.includes(v.stashAddress)) {
+            v.remove();
+          }
+        }
       });
 
+      resolve();
     } catch (err) {
       reject(err);
     }
@@ -312,7 +280,7 @@ function updateNodesIdentities(api) {
               if (!identityValue['isEmpty']) {
                 node.info.set(identityKey, identityValue._raw.toString());
 
-                // Save validator/candidate icon
+                // Save node icon
                 if (identityKey === 'image') {
                   let url = hexToString(identityValue._raw.toString());
 
@@ -339,24 +307,4 @@ function updateNodesIdentities(api) {
     }
 
   });
-}
-
-function addValidatorPoints(pointsArr, validator) {
-  pointsArr.forEach(point => {
-    validator.historicalData.points.push({
-      era: point.era.toNumber(),
-      points: point.points.toNumber()
-    });
-  });
-  return validator;
-}
-
-function addValidatorSlashes(slashesArr, validator) {
-  slashesArr.forEach(slash => {
-    validator.historicalData.slashes.push({
-      era: slash.era.toNumber(),
-      total: slash.total.toString()
-    });
-  });
-  return validator;
 }

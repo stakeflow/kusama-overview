@@ -24,7 +24,7 @@ export default {
     return {
       chartOptions: {
         xAxis: {
-          data: this.node.historicalData[0].points
+          data: this.node.historicalData.points
             .filter((item, index) => (index < 100))
             .map((item) => item.era)
         },
@@ -38,7 +38,7 @@ export default {
         series: [
           {
             type: 'bar',
-            data: this.node.historicalData[0].points
+            data: this.node.historicalData.points
               .filter((item, index) => (index < 100))
               .map((item) => item.points)
           }

@@ -42,7 +42,7 @@ export default {
     async getAppStateLoop({ dispatch }) {
       setInterval(() => {
         dispatch('getAppState');
-      }, 3000);
+      }, 4500);
     },
 
     async getSyncStatus({ commit }) {

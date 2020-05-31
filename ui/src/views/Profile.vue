@@ -73,7 +73,7 @@
             </table>
           </div>
 
-          <div class="block points" v-if="node.historicalData[0].points.length > 0">
+          <div class="block points" v-if="node.historicalData.points.length > 0">
             <h3>Points / Era</h3>
             <PointsChart :node="node" />
           </div>

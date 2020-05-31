@@ -1,8 +1,8 @@
 export default {
   namespaced: true,
   state: {
-    loopNodeStart: false,
-    loopNodesStart: false,
+    isNodeUpdateLoopStarted: false,
+    isNodesUpdateLoopStarted: false,
     node: null,
     nodes: [],
     sortBy: 'stakeTotal',
@@ -46,12 +46,12 @@ export default {
       state.sortBy = sortBy;
     },
 
-    UPDATE_LOOPNODE(state, loopNodeStart) {
-      state.loopNodeStart = loopNodeStart;
+    UPDATE_NODE_UPDATE_FLAG(state, isNodeUpdateLoopStarted) {
+      state.isNodeUpdateLoopStarted = isNodeUpdateLoopStarted;
     },
 
-    UPDATE_LOOPNODES(state, loopNodesStart) {
-      state.loopNodesStart = loopNodesStart;
+    UPDATE_NODES_UPDATE_FLAG(state, isNodesUpdateLoopStarted) {
+      state.isNodesUpdateLoopStarted = isNodesUpdateLoopStarted;
     }
   },
   actions: {
@@ -75,8 +75,8 @@ export default {
       if (!state.loopNodeStart) {
         setInterval(() => {
           dispatch('getNode');
-        }, 5000);
-        commit('UPDATE_LOOPNODE', true);
+        }, 4500);
+        commit('UPDATE_NODE_UPDATE_FLAG', true);
       }
     },
 
@@ -97,8 +97,8 @@ export default {
       if (!state.loopNodesStart) {
         setInterval(() => {
           dispatch('getNodes');
-        }, 20000);
-        commit('UPDATE_LOOPNODES', true);
+        }, 4500);
+        commit('UPDATE_NODES_UPDATE_FLAG', true);
       }
     }
   }

@@ -72,7 +72,7 @@ export default {
 
     async getNodeLoop({ commit, dispatch, state }) {
       dispatch('getNode');
-      if (!state.loopNodeStart) {
+      if (!state.isNodeUpdateLoopStarted) {
         setInterval(() => {
           dispatch('getNode');
         }, 4500);
@@ -94,7 +94,7 @@ export default {
 
     async getNodesLoop({ commit, dispatch, state }) {
       dispatch('getNodes');
-      if (!state.loopNodesStart) {
+      if (!state.isNodesUpdateLoopStarted) {
         setInterval(() => {
           dispatch('getNodes');
         }, 4500);

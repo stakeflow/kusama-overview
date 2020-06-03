@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 // Schema
 const stateSchema = mongoose.Schema({
+  isSyncing: { type: Boolean },
   block: { type: Number },
   activeEra: { type: Number },
   activeEraStartAt: { type: Number },

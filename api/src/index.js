@@ -16,7 +16,7 @@ mongoConnection.connect(`mongodb://localhost/${process.env.DB_NAME}`);
 // API methods
 const controller = {
 
-  // Get network common data
+  // Get network common data and node synchronization status
   async getAppState() {
     return State.findOne((err, state) => {
       if (err) {

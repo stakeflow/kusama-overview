@@ -2,6 +2,7 @@ require('dotenv').config();
 const JSBI = require('jsbi');
 const { hexToString } = require('@polkadot/util');
 const axios = require('axios');
+const delay = require('delay');
 
 const { mongoConnection } = require('./db/mongoConnection');
 const { nodeConnection } = require('./nodeConnection');
@@ -22,15 +23,49 @@ const State = require('./db/models/State');
     // Check is State already initialized
     await State.find().countDocuments().then(async count => {
       if (count === 0) {
-        let state = new State({ block: 0 });
+        let state = new State();
         await state.save();
       }
     });
+
+    // Get app state and predefine sync status as finished
+    let state = await State.findOne();
+    state.isSyncing = false;
 
     // Data update flags
     let updateNetworkDataInProgress = false;
     let updateNodesDataInProgress = false;
     let updateNodesIdentitiesInProgress = false;
+
+    // Check node status
+    let { peersNumber, isSyncing } = await api.rpc.system.health().then(health => {
+      return {
+        peersNumber: health.peers.toNumber(),
+        isSyncing: health.isSyncing.toString()
+      }
+    });
+
+    // Wait synchronization process to finish
+    while(peersNumber === 0 || isSyncing === "true") {
+      console.log('Node is out of sync. Waiting...');
+
+      if (state.isSyncing === false) {
+        state.isSyncing = true;
+        await state.save();
+      }
+
+      await delay(5000);
+      await api.rpc.system.health().then(health => {
+          peersNumber = health.peers.toNumber();
+          isSyncing = health.isSyncing.toString();
+      });
+    }
+
+    // Synchronization complete
+    if (state.isSyncing === true) {
+      state.isSyncing = false;
+    }
+    await state.save();
 
     // Subscribe to new blocks and update the DB with the new data
     await api.rpc.chain.subscribeNewHeads(async (header) => {
@@ -77,7 +112,7 @@ const State = require('./db/models/State');
 
     });
   } catch (e) {
-    console.log(e.message);
+    console.log(e);
     process.exit();
   }
 

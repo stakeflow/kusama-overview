@@ -1,8 +1,8 @@
 export default {
   namespaced: true,
   state: {
-    loopNodeStart: false,
-    loopNodesStart: false,
+    isNodeUpdateLoopStarted: false,
+    isNodesUpdateLoopStarted: false,
     node: null,
     nodes: [],
     sortBy: 'stakeTotal',
@@ -46,12 +46,12 @@ export default {
       state.sortBy = sortBy;
     },
 
-    UPDATE_LOOPNODE(state, loopNodeStart) {
-      state.loopNodeStart = loopNodeStart;
+    UPDATE_NODE_UPDATE_FLAG(state, isNodeUpdateLoopStarted) {
+      state.isNodeUpdateLoopStarted = isNodeUpdateLoopStarted;
     },
 
-    UPDATE_LOOPNODES(state, loopNodesStart) {
-      state.loopNodesStart = loopNodesStart;
+    UPDATE_NODES_UPDATE_FLAG(state, isNodesUpdateLoopStarted) {
+      state.isNodesUpdateLoopStarted = isNodesUpdateLoopStarted;
     }
   },
   actions: {
@@ -72,11 +72,11 @@ export default {
 
     async getNodeLoop({ commit, dispatch, state }) {
       dispatch('getNode');
-      if (!state.loopNodeStart) {
+      if (!state.isNodeUpdateLoopStarted) {
         setInterval(() => {
           dispatch('getNode');
-        }, 5000);
-        commit('UPDATE_LOOPNODE', true);
+        }, 4500);
+        commit('UPDATE_NODE_UPDATE_FLAG', true);
       }
     },
 
@@ -94,11 +94,11 @@ export default {
 
     async getNodesLoop({ commit, dispatch, state }) {
       dispatch('getNodes');
-      if (!state.loopNodesStart) {
+      if (!state.isNodesUpdateLoopStarted) {
         setInterval(() => {
           dispatch('getNodes');
-        }, 20000);
-        commit('UPDATE_LOOPNODES', true);
+        }, 4500);
+        commit('UPDATE_NODES_UPDATE_FLAG', true);
       }
     }
   }

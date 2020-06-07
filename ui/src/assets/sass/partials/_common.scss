@@ -81,6 +81,16 @@ body {
     }
   }
 
+  .outOfSyncMessage {
+    margin: 10px 0 0;
+    padding: 10px;
+    border-radius: 4px;
+    border: 1px solid #fbfad0;
+    text-align: center;
+    color: #fdffb5;
+    font-size: 0.8em;
+  }
+
   // Text modifications
   .pale {
     opacity: 0.5;

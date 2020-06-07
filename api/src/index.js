@@ -11,11 +11,12 @@ const State = require('./db/models/State');
 const Validator = require('./db/models/Validator');
 
 // Init DB connection
-mongoConnection.connect(`mongodb://localhost/${process.env.DB_NAME}`);
+mongoConnection.connect(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
 
 // API methods
 const controller = {
 
+  // Get network common data and node synchronization status
   async getAppState() {
     return State.findOne((err, state) => {
       if (err) {
@@ -25,6 +26,7 @@ const controller = {
     });
   },
 
+  // Get nodes list
   async getNodes() {
     return Validator.find({}, { historicalData: 0, events: 0 }, (err, validators) => {
       if (err) {
@@ -34,6 +36,7 @@ const controller = {
     });
   },
 
+  // Get node's data
   async getNode(params) {
     return Validator.findOne({ stashAddress: params.stashAddress }, { events: 0 }, (err, validator) => {
       if (err) {
@@ -43,6 +46,7 @@ const controller = {
     });
   },
 
+  // Get user stakes
   async getUserStakes({addresses}) {
     let userStakes = {};
 

@@ -36,7 +36,7 @@ const validatorSchema = mongoose.Schema({
     doubleSignSlashCounter: Number,
     declaredAtBlock: Number,
     declaredAtTime: Number,
-    historicalData: [{
+    historicalData: {
         points: [{
             era: Number,
             points: Number
@@ -45,7 +45,7 @@ const validatorSchema = mongoose.Schema({
             era: Number,
             total: String
         }]
-    }]
+    }
 }, { collection: 'validators' })
 
 // Export Model

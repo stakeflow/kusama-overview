@@ -1,19 +1,21 @@
 <template>
   <div class="container">
-    <UserAddresses />
-    <NetworkData />
-    <div class="section candidatesOverview">
-      <NodesList />
+    <p v-if="appState.isSyncing === true" class="outOfSyncMessage"><i class="fas fa-exclamation-circle"></i> Kusama node is out of sync</p>
+    <div v-else>
+      <UserAddresses />
+      <NetworkData />
+      <div class="section candidatesOverview">
+        <NodesList />
+      </div>
     </div>
-    <SyncStatus />
   </div>
 </template>
 
 <script>
+import { mapGetters } from 'vuex';
 import UserAddresses from '../components/UserAddresses.vue';
 import NetworkData from '../components/NetworkData.vue';
 import NodesList from '../components/NodesList.vue';
-import SyncStatus from '../components/SyncStatus.vue';
 
 export default {
 
@@ -28,15 +30,19 @@ export default {
   components: {
     NetworkData,
     UserAddresses,
-    NodesList,
-    SyncStatus
+    NodesList
+  },
+
+  computed: {
+    ...mapGetters({
+      appState: 'app/appState'
+    })
   },
 
   mounted() {
     this.$store.dispatch('app/getAppStateLoop');
     this.$store.dispatch('user/initAddresses');
     this.$store.dispatch('user/getUserStakesLoop');
-    this.$store.dispatch('app/getSyncStatusLoop');
     this.$store.dispatch('nodes/getNodesLoop');
   }
 

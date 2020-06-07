@@ -288,9 +288,7 @@ export default {
       $w: '$w',
       responsiveClass: 'responsiveClass',
       nodesSorted: 'nodes/nodesSorted',
-      userStakes: 'user/userStakes',
-      appHeight: 'app/appHeight',
-      networkHeight: 'app/networkHeight'
+      userStakes: 'user/userStakes'
     })
   },
 

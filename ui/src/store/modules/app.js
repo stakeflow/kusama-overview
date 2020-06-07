@@ -3,26 +3,18 @@ export default {
   state: {
     appVersion: process.env.VUE_APP_VERSION,
     appState: {},
-    appHeight: 0,
-    networkHeight: 1
+    isAppStateUpdateLoopStarted: false
   },
   getters: {
     appVersion: (state) => state.appVersion,
-    appState: (state) => state.appState,
-    appHeight: (state) => state.appHeight,
-    networkHeight: (state) => state.networkHeight
+    appState: (state) => state.appState
   },
   mutations: {
     SET_APP_STATE(state, appState) {
       state.appState = appState;
     },
-
-    SET_APP_HEIGHT(state, appHeight) {
-      state.appHeight = appHeight;
-    },
-
-    SET_NETWORK_HEIGHT(state, networkHeight) {
-      state.networkHeight = networkHeight;
+    UPDATE_APP_STATE_UPDATE_FLAG(state, isAppStateUpdateLoopStarted) {
+      state.isAppStateUpdateLoopStarted = isAppStateUpdateLoopStarted;
     }
   },
   actions: {
@@ -39,21 +31,14 @@ export default {
       commit('SET_APP_STATE', response.data.result);
     },
 
-    async getAppStateLoop({ dispatch }) {
-      setInterval(() => {
-        dispatch('getAppState');
-      }, 3000);
-    },
-
-    async getSyncStatus({ commit }) {
-      commit('SET_APP_HEIGHT', 0);
-      commit('SET_NETWORK_HEIGHT', 1);
-    },
-
-    async getSyncStatusLoop({ dispatch }) {
-      setInterval(() => {
-        dispatch('getSyncStatus');
-      }, 1000);
+    async getAppStateLoop({ commit, dispatch, state }) {
+      dispatch('getAppState');
+      if (!state.isAppStateUpdateLoopStarted) {
+        setInterval(() => {
+          dispatch('getAppState');
+        }, 4500);
+        commit('UPDATE_APP_STATE_UPDATE_FLAG', true);
+      }
     }
   }
 };

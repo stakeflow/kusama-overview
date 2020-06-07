@@ -7,7 +7,6 @@
       <div class="section candidatesOverview">
         <NodesList />
       </div>
-      <SyncStatus />
     </div>
   </div>
 </template>
@@ -17,7 +16,6 @@ import { mapGetters } from 'vuex';
 import UserAddresses from '../components/UserAddresses.vue';
 import NetworkData from '../components/NetworkData.vue';
 import NodesList from '../components/NodesList.vue';
-import SyncStatus from '../components/SyncStatus.vue';
 
 export default {
 
@@ -32,8 +30,7 @@ export default {
   components: {
     NetworkData,
     UserAddresses,
-    NodesList,
-    SyncStatus
+    NodesList
   },
 
   computed: {

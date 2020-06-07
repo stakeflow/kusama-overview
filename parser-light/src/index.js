@@ -15,7 +15,7 @@ const State = require('./db/models/State');
 
   try {
     // Init DB connection
-    await mongoConnection.connect(`mongodb://localhost/${process.env.DB_NAME}`);
+    mongoConnection.connect(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
 
     // Get node ws connection
     const api = await nodeConnection.getInstance(process.env.WSNODE);

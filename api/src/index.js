@@ -11,7 +11,7 @@ const State = require('./db/models/State');
 const Validator = require('./db/models/Validator');
 
 // Init DB connection
-mongoConnection.connect(`mongodb://localhost/${process.env.DB_NAME}`);
+mongoConnection.connect(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
 
 // API methods
 const controller = {

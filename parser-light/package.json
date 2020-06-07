@@ -3,6 +3,7 @@
   "author": "genesis-lab-team",
   "license": "Apache-2.0",
   "scripts": {
+    "watch": "nodemon ./src/index.js",
     "start": "node ./src/index.js"
   },
   "dependencies": {
@@ -12,5 +13,8 @@
     "dotenv": "^8.2.0",
     "jsbi": "^3.1.2",
     "mongoose": "^5.9"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.4"
   }
 }

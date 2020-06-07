@@ -2,26 +2,26 @@ version: '3.7'
 
 services:
   polkadot-node:
-    container_name: kusama-node
+    container_name: kusama-overview-kusama-node
     image: parity/polkadot:latest
-    volumes:
-      - '.docker-volumes/polkadot-node:/polkadot/.local/share/polkadot'
+#    volumes:
+#      - '.docker-volumes/polkadot-node:/polkadot/.local/share/polkadot'
     ports:
       - '30333:30333'
       - '9933:9933'
       - '9944:9944'
     command: --chain kusama --pruning archive --wasm-execution Compiled --unsafe-ws-external --rpc-cors all
   mongo:
-    container_name: mongo
+    container_name: kusama-overview-mongo
     image: mongo
-    volumes:
-      - '.docker-volumes/mongo:/data/db'
+#    volumes:
+#      - '.docker-volumes/mongo:/data/db'
     ports:
     - "27017:27017"
   kusama-overview-app:
     container_name: kusama-overview-app
-    build: .
     image: kusama-overview-app:latest
+    build: .
     volumes:
       - .:/usr/src/kusama-overview
       - /usr/src/kusama-overview/node_modules

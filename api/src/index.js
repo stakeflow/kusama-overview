@@ -1,65 +1,42 @@
 require('dotenv').config();
-const {mongoConnection} = require('./db/mongoConnection');
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const jsonRouter = require('express-json-rpc-router');
 const JSBI = require('jsbi');
+const { MongoClient } = require('mongodb');
 
-// Models
-const State = require('./db/models/State');
-const Validator = require('./db/models/Validator');
-
-// Init DB connection
-mongoConnection.connect(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
+// Connect to mongo
+let mongoClient = new MongoClient(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}`,  { useUnifiedTopology: true });
+mongoClient.connect();
+let db =  mongoClient.db(process.env.DB_NAME);
 
 // API methods
 const controller = {
 
   // Get network common data and node synchronization status
-  async getAppState() {
-    return State.findOne((err, state) => {
-      if (err) {
-        console.log(err);
-      }
-      return state;
-    });
+  getAppState() {
+    return db.collection('state').findOne();
   },
 
   // Get nodes list
-  async getNodes() {
-    return Validator.find({}, { historicalData: 0, events: 0 }, (err, validators) => {
-      if (err) {
-        console.log(err);
-      }
-      return validators;
-    });
+  getNodes() {
+    return db.collection('validators').find({}, { historicalData: 0, events: 0 }).toArray();
   },
 
   // Get node's data
-  async getNode(params) {
-    return Validator.findOne({ stashAddress: params.stashAddress }, { events: 0 }, (err, validator) => {
-      if (err) {
-        console.log(err);
-      }
-      return validator;
-    });
+  getNode(params) {
+    return db.collection('validators').findOne({ stashAddress: params.stashAddress }, { events: 0 });
   },
 
   // Get user stakes
-  async getUserStakes({addresses}) {
+  async getUserStakes({ addresses }) {
     let userStakes = {};
 
-    let validators = await Validator.find({"nominators.address": addresses}, {
+    let validators = await db.collection('validators').find({ "nominators.address": { "$in": addresses } }, {
       stashAddress: 1,
       nominators: 1
-    }, async (err, validators) => {
-      if (err) {
-        console.log(err);
-      } else {
-        return validators;
-      }
-    });
+    }).toArray();
 
     addresses.forEach(address => {
       validators.forEach(v => {

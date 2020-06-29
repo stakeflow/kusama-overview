@@ -3,16 +3,13 @@ const JSBI = require('jsbi');
 const { hexToString } = require('@polkadot/util');
 const axios = require('axios');
 const delay = require('delay');
+const { MongoClient } = require('mongodb');
 
-const { mongoConnection } = require('./db/mongoConnection');
 const { ApiPromise, WsProvider } = require('@polkadot/api');
 
-// Models
-const Validator = require('./db/models/Validator');
-const State = require('./db/models/State');
-
-// Init DB connection
-mongoConnection.connect(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
+// DB connection
+let mongoClient;
+let db;
 
 // Init some common variables used across the different parts of the parser
 let api;
@@ -28,7 +25,6 @@ let lastSessionProcessed;
 let lastEraProcessed;
 
 (async () => {
-
   try {
     await init().then(() => {
       console.log('init ✅ ');
@@ -97,6 +93,7 @@ let lastEraProcessed;
     });
   } catch (e) {
     console.log(e);
+    mongoClient.close();
     process.exit();
   }
 
@@ -106,21 +103,22 @@ function init() {
   return new Promise(async (resolve, reject) => {
 
     try {
+      // Connect to mongo
+      mongoClient = new MongoClient(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}`,  { useUnifiedTopology: true });
+      await mongoClient.connect();
+      db =  await mongoClient.db(process.env.DB_NAME);
+
       // Get polkadot node WS connection
       const wsProvider = new WsProvider(process.env.WSNODE);
       api = await ApiPromise.create({ provider: wsProvider });
 
-      // Check is State already initialized
-      await State.find().countDocuments().then(async count => {
-        if (count === 0) {
-          let state = new State();
-          await state.save();
-        }
-      });
+      // Get app state
+      let state = await db.collection('state').findOne();
 
-      // Get app state and predefine sync status as finished
-      let state = await State.findOne();
-      state.isSyncing = false;
+      // Check if state not created yet
+      if (state === null) {
+        state = await db.collection('state').insertOne({}).then(res => res.ops[0]);
+      }
 
       // Check node status
       let { peersNumber, isSyncing } = await api.rpc.system.health().then(health => {
@@ -134,9 +132,9 @@ function init() {
       while(peersNumber === 0 || isSyncing === "true") {
         console.log('Node is out of sync. Waiting...');
 
-        if (state.isSyncing === false) {
+        if (state.isSyncing !== true) {
           state.isSyncing = true;
-          await state.save();
+          await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
         }
 
         await delay(5000);
@@ -147,10 +145,10 @@ function init() {
       }
 
       // Synchronization complete
-      if (state.isSyncing === true) {
+      if (state.isSyncing !== false) {
         state.isSyncing = false;
+        await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
       }
-      await state.save();
 
       resolve();
     } catch (err) {
@@ -165,11 +163,11 @@ function updateNetworkData(blockNumber, eraIndex, sessionIndex) {
 
     try {
       // Update DB with the actual network data
-      let state = await State.findOne();
+      let state = await db.collection('state').findOne();
       state.block = blockNumber;
       state.activeEra = eraIndex;
       state.sessionIndex = sessionIndex;
-      await state.save();
+      await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
 
       resolve();
     } catch (err) {
@@ -188,7 +186,6 @@ function updateNodesData(eraIndex, sessionIndex) {
         if (blockAuthors.length > 0) {
 
           let authorsList = blockAuthors.splice(0, blockAuthors.length);
-          console.log(authorsList.length);
 
           // Collect required data
           let [heartbeats, currentNodePoints] = await Promise.all([
@@ -197,18 +194,12 @@ function updateNodesData(eraIndex, sessionIndex) {
           ]);
 
           for await (let blockAuthor of authorsList) {
-            await Validator.findOne({ stashAddress: blockAuthor }).then(async node => {
+            await db.collection('validators').findOne({ stashAddress: blockAuthor }).then(async node => {
               if (node !== null) {
                 node.authoredBlocks = await api.query.imOnline.authoredBlocks(sessionIndex, node.stashAddress).then(authoredBlocks => authoredBlocks.toNumber());
                 node.points = currentNodePoints.toJSON().individual[node.stashAddress];
                 node.heartbeats = heartbeats[node.stashAddress].hasMessage;
-
-                // Save node in DB
-                try {
-                  await node.save();
-                } catch (err) {
-                  console.log(err);
-                }
+                await db.collection('validators').updateOne({ "_id": node._id }, { "$set": node });
               }
             });
           }
@@ -226,24 +217,22 @@ function updateNodesData(eraIndex, sessionIndex) {
         ]);
 
         // Update app state (validators, validator slots and candidates number) on session change
-        let state = await State.findOne();
+        let state = await db.collection('state').findOne();
         state.activeValidators = sessionValidators.length;
         state.candidates = networkNodes.length - sessionValidators.length;
         state.validatorSlots = await api.query.staking.validatorCount().then(validatorCount => validatorCount.toNumber());
-        await state.save();
+        await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
 
         // Collect the accounts information for all network nodes
         let accountsInfo = await Promise.all(networkNodes.map(candidate => api.derive.staking.account(candidate)));
 
-        // Store all the updated nodes in variable and update them all with the new data
-        let nodesToUpdate = [];
-
         // Update data for every network node
         for await (let [i, stashAddress] of networkNodes.entries()) {
+
           // Find the node in DB or create the new one
-          await Validator.findOne({ stashAddress: stashAddress.toString() }).then(async node => {
+          await db.collection('validators').findOne({ stashAddress: stashAddress.toString() }).then(async node => {
             if (node === null) {
-              node = new Validator({
+              node = {
                 controlAddress: accountsInfo[i].controllerId.toString(),
                 stashAddress: stashAddress.toString(),
                 commission: accountsInfo[i].validatorPrefs.commission.toNumber() / 10000000,
@@ -252,7 +241,8 @@ function updateNodesData(eraIndex, sessionIndex) {
                   points: [],
                   slashes: []
                 }
-              });
+              }
+              node = await db.collection('validators').insertOne(node).then(res => res.ops[0]);
             }
 
             // Get account exposure for node
@@ -279,7 +269,7 @@ function updateNodesData(eraIndex, sessionIndex) {
             node.stakeTotal = "0";
 
             // Update node's own stake
-            node.stakeOwn = exposure.own;
+            node.stakeOwn = String(exposure.own);
 
             // Add node's own stash as a nominator and add it's stake to totalStake
             node.nominators.push({
@@ -326,25 +316,21 @@ function updateNodesData(eraIndex, sessionIndex) {
               });
             }
 
-            nodesToUpdate.push(node);
+            await db.collection('validators').updateOne({ "_id": node._id }, { "$set": node });
           });
         }
 
-        // Save nodes with updated data
-        await Promise.all(nodesToUpdate.map(node => node.save()));
-
         // Clean up DB nodes list
         let networkNodesStashAddresses = networkNodes.map(node => node.toString());
-        await Validator.find({}, async (err, validators) => {
-          if (err) {
-            console.log(err);
+        let nodesCursor = await db.collection('validators').find();
+
+        while (await nodesCursor.hasNext()) {
+          let node = await nodesCursor.next();
+
+          if (!networkNodesStashAddresses.includes(node.stashAddress)) {
+            db.collection('validators').deleteOne({ stashAddress: node.stashAddress });
           }
-          for await (let v of validators) {
-            if (!networkNodesStashAddresses.includes(v.stashAddress)) {
-              v.remove();
-            }
-          }
-        });
+        }
 
         lastSessionProcessed = sessionIndex;
         lastEraProcessed = eraIndex;
@@ -364,50 +350,43 @@ function updateNodesIdentities() {
     try {
 
       // Get all nodes stored in DB
-      await Validator.find({}, async (err, nodes) => {
-        if (err) {
-          console.log(err);
-        }
+      let nodesCursor = await db.collection('validators').find();
+
+      while (await nodesCursor.hasNext()) {
+        let node = await nodesCursor.next();
 
         // Collect the identities for the currently saved nodes
-        let identities = await Promise.all(nodes.map(node => api.query.identity.identityOf(node.stashAddress)));
+        let identity = await api.query.identity.identityOf(node.stashAddress);
 
-        // Store all the updated identities in variable and update them all with the new data
-        let nodesIdentitiesToUpdate = [];
+        node.info = new Map();
+        if (!identity['isEmpty']) {
+          for await (let [identityKey, identityValue] of identity._raw.info) {
+            if (!identityValue['isEmpty']) {
+              node.info.set(identityKey, identityValue._raw.toString());
 
-        // Update identity for nodes
-        for await (let [i, node] of nodes.entries()) {
-          node.info = new Map();
-          if (!identities[i]['isEmpty']) {
-            for await (let [identityKey, identityValue] of identities[i]._raw.info) {
-              if (!identityValue['isEmpty']) {
-                node.info.set(identityKey, identityValue._raw.toString());
+              // Save node icon
+              if (identityKey === 'image') {
+                let url = hexToString(identityValue._raw.toString());
 
-                // Save node icon
-                if (identityKey === 'image') {
-                  let url = hexToString(identityValue._raw.toString());
-
-                  await axios.get(url, {
-                      responseType: 'arraybuffer'
-                    })
-                    .then(async response => {
-                      node.icon = Buffer.from(response.data, 'binary').toString('base64');
-                    })
-                    .catch(err => {
-                      console.log(err.message);
-                    });
-                }
+                await axios.get(url, {
+                  responseType: 'arraybuffer'
+                })
+                  .then(async response => {
+                    node.icon = Buffer.from(response.data, 'binary').toString('base64');
+                  })
+                  .catch(err => {
+                    console.log(err.message);
+                  });
               }
             }
           }
-          nodesIdentitiesToUpdate.push(node);
         }
 
-        // Save new identities
-        await Promise.all(nodesIdentitiesToUpdate.map(node => node.save()));
+        // Update node identity
+        await db.collection('validators').updateOne({ "_id": node._id }, { "$set": node });
+      }
 
-        resolve();
-      });
+      resolve();
     } catch (err) {
       reject(err);
     }

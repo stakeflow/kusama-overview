@@ -77,8 +77,8 @@ let lastEraProcessed;
         });
       }
 
-      // Update nodes identities every 100 blocks
-      if (!updateNodesIdentitiesInProgress && header.number % 100 === 0) {
+      // Update nodes identities every 3600 blocks
+      if (!updateNodesIdentitiesInProgress && header.number % 3600 === 0) {
         updateNodesIdentitiesInProgress = true;
 
         updateNodesIdentities().then(() => {

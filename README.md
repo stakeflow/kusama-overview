@@ -40,6 +40,7 @@ cd ../ui && cp .env.example.docker .env && cd ..
 
 <details>
 <summary>See the full list of .env variables</summary>
+
 `parser-light/.env`
 Variable | Default value | Description
  ------ | ------ | ------
@@ -48,6 +49,7 @@ APP_API_PORT | 4000 | Kusama Overview app API port
 DB_NAME | kusama-overview | Database name
 DB_LOCATION | localhost | MongoDB host
 DB_PORT | 27017 | MongoDB port
+
 
 `api/.env`
 Variable | Default value | Description
@@ -108,6 +110,7 @@ cd ../ui && cp .env.example .env && cd ..
 
 <details>
 <summary>See the full list of .env variables</summary>
+ 
 `parser-light/.env`
 Variable | Default value | Description
  ------ | ------ | ------
@@ -116,6 +119,7 @@ APP_API_PORT | 4000 | Kusama Overview app API port
 DB_NAME | kusama-overview | Database name
 DB_LOCATION | localhost | MongoDB host
 DB_PORT | 27017 | MongoDB port
+
 
 `api/.env`
 Variable | Default value | Description

@@ -3,80 +3,60 @@ const JSBI = require('jsbi');
 const { hexToString } = require('@polkadot/util');
 const axios = require('axios');
 const delay = require('delay');
+const { MongoClient } = require('mongodb');
 
-const { mongoConnection } = require('./db/mongoConnection');
-const { nodeConnection } = require('./nodeConnection');
+const { ApiPromise, WsProvider } = require('@polkadot/api');
 
-// Models
-const Validator = require('./db/models/Validator');
-const State = require('./db/models/State');
+// DB connection
+let mongoClient;
+let db;
+
+// Init some common variables used across the different parts of the parser
+let api;
+let blockAuthors = [];
+
+// Prepare updateInProgress flags
+let updateNetworkDataInProgress = false;
+let updateNodesDataInProgress = false;
+let updateNodesIdentitiesInProgress = false;
+
+// There is no need to perform some actions on every block in updateNodesData and only execute the code on session or era change
+let lastSessionProcessed;
+let lastEraProcessed;
 
 (async () => {
-
   try {
-    // Init DB connection
-    mongoConnection.connect(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}/${process.env.DB_NAME}`);
-
-    // Get node ws connection
-    const api = await nodeConnection.getInstance(process.env.WSNODE);
-
-    // Check is State already initialized
-    await State.find().countDocuments().then(async count => {
-      if (count === 0) {
-        let state = new State();
-        await state.save();
-      }
+    await init().then(() => {
+      console.log('init ✅ ');
+    }).catch(err => {
+      console.log(err);
     });
-
-    // Get app state and predefine sync status as finished
-    let state = await State.findOne();
-    state.isSyncing = false;
-
-    // Data update flags
-    let updateNetworkDataInProgress = false;
-    let updateNodesDataInProgress = false;
-    let updateNodesIdentitiesInProgress = false;
-
-    // Check node status
-    let { peersNumber, isSyncing } = await api.rpc.system.health().then(health => {
-      return {
-        peersNumber: health.peers.toNumber(),
-        isSyncing: health.isSyncing.toString()
-      }
-    });
-
-    // Wait synchronization process to finish
-    while(peersNumber === 0 || isSyncing === "true") {
-      console.log('Node is out of sync. Waiting...');
-
-      if (state.isSyncing === false) {
-        state.isSyncing = true;
-        await state.save();
-      }
-
-      await delay(5000);
-      await api.rpc.system.health().then(health => {
-          peersNumber = health.peers.toNumber();
-          isSyncing = health.isSyncing.toString();
-      });
-    }
-
-    // Synchronization complete
-    if (state.isSyncing === true) {
-      state.isSyncing = false;
-    }
-    await state.save();
 
     // Subscribe to new blocks and update the DB with the new data
-    await api.rpc.chain.subscribeNewHeads(async (header) => {
-      console.log(`Chain is at block #${header.number}`);
+    await api.derive.chain.subscribeNewHeads(async (header) => {
+
+      // Collect actual network data
+      let blockNumber = header.number.toNumber();
+      let [eraIndex, sessionIndex] = await Promise.all([
+        api.query.staking.activeEra(),
+        api.query.session.currentIndex()
+      ]);
+      eraIndex = eraIndex.toJSON().index;
+      sessionIndex = sessionIndex.toNumber();
+
+      console.log(`Chain is at block ${blockNumber}, session ${sessionIndex}, era ${eraIndex}`);
+
+      // Collect block authors to update data in updateNodesData()
+      if (!blockAuthors.includes(header.author.toString())) {
+        blockAuthors.push(header.author.toString());
+      }
 
       // Collect network statistics every block
       if (!updateNetworkDataInProgress) {
         updateNetworkDataInProgress = true;
 
-        updateNetworkData(api, header).then(() => {
-          console.log('\x1b[36m%s\x1b[0m', `Block #${header.number}: updateNetworkData ✅ `);
+        updateNetworkData(blockNumber, eraIndex, sessionIndex).then(() => {
+          console.log('\x1b[36m%s\x1b[0m', `Block #${blockNumber}: updateNetworkData ✅ `);
         }).catch(err => {
           console.log(err);
         }).finally(() => {
@@ -88,8 +68,8 @@ const State = require('./db/models/State');
       if (!updateNodesDataInProgress) {
         updateNodesDataInProgress = true;
 
-        updateNodesData(api).then(() => {
-          console.log('\x1b[36m%s\x1b[0m', `Block #${header.number}: updateNodesData ✅ `);
+        updateNodesData(eraIndex, sessionIndex).then(() => {
+          console.log('\x1b[36m%s\x1b[0m', `Block #${blockNumber}: updateNodesData ✅ `);
         }).catch(err => {
           console.log(err);
         }).finally(() => {
@@ -97,12 +77,12 @@ const State = require('./db/models/State');
         });
       }
 
-      // Update nodes identities every 100 blocks
-      if (!updateNodesIdentitiesInProgress && header.number % 100 === 0) {
+      // Update nodes identities every 3600 blocks
+      if (!updateNodesIdentitiesInProgress && header.number % 3600 === 0) {
         updateNodesIdentitiesInProgress = true;
 
-        updateNodesIdentities(api).then(() => {
-          console.log('\x1b[36m%s\x1b[0m', `Block #${header.number}: updateNodesIdentities ✅ `);
+        updateNodesIdentities().then(() => {
+          console.log('\x1b[36m%s\x1b[0m', `Block #${blockNumber}: updateNodesIdentities ✅ `);
         }).catch(err => {
           console.log(err);
         }).finally(() => {
@@ -113,178 +93,63 @@ const State = require('./db/models/State');
     });
   } catch (e) {
     console.log(e);
+    mongoClient.close();
     process.exit();
   }
 
 })();
 
-function updateNetworkData(api, header) {
+function init() {
   return new Promise(async (resolve, reject) => {
 
     try {
-      // Collect actual network data
-      const [activeEra, validatorCount, sessionIndex, sessionsPerEra] = await Promise.all([
-        api.query.staking.activeEra(),
-        api.query.staking.validatorCount(),
-        api.query.session.currentIndex(),
-        api.consts.staking.sessionsPerEra
-      ]);
+      // Connect to mongo
+      mongoClient = new MongoClient(`mongodb://${process.env.DB_LOCATION}:${process.env.DB_PORT}`,  { useUnifiedTopology: true });
+      await mongoClient.connect();
+      db =  await mongoClient.db(process.env.DB_NAME);
 
-      // Update DB with the actual network data
-      let state = await State.findOne();
-      state.block = header.number.toNumber();
-      state.activeEra = activeEra.toJSON().index;
-      state.activeEraStartAt = activeEra.toJSON().start;
-      state.validatorSlots = validatorCount.toNumber();
-      state.sessionIndex = sessionIndex.toNumber();
-      state.sessionsPerEra = sessionsPerEra.toNumber();
-      await state.save();
+      // Get polkadot node WS connection
+      const wsProvider = new WsProvider(process.env.WSNODE);
+      api = await ApiPromise.create({ provider: wsProvider });
 
-      resolve();
-    } catch (err) {
-      reject(err);
-    }
+      // Get app state
+      let state = await db.collection('state').findOne();
 
-  });
-}
-
-function updateNodesData(api) {
-  return new Promise(async (resolve, reject) => {
-
-    try {
-
-      // Collect required data
-      let [sessionValidators, heartbeats, sessionIndexes, stackingOverview, networkNodes] = await Promise.all([
-        api.query.session.validators(),
-        api.derive.imOnline.receivedHeartbeats(),
-        api.derive.session.indexes(),
-        api.derive.staking.overview(),
-        api.derive.staking.stashes()
-      ]);
-      let currentSessionIndex = sessionIndexes.currentIndex;
-      let nextElected = stackingOverview.nextElected;
-
-      // Collect the accounts information for all network nodes
-      let accountsInfo = await Promise.all(networkNodes.map(candidate => api.derive.staking.account(candidate)));
-
-      // Update app state (validators and candidates number)
-      let state = await State.findOne();
-      state.activeValidators = sessionValidators.length;
-      state.candidates = networkNodes.length - sessionValidators.length;
-      await state.save();
-
-      // Update data for every network node
-      for await (let [i, stashAddress] of networkNodes.entries()) {
-
-        // Find the node in DB or create the new one
-        await Validator.findOne({ stashAddress: stashAddress.toString() }).then(async node => {
-
-          if (node === null) {
-            node = new Validator({
-              controlAddress: accountsInfo[i].controllerId.toString(),
-              stashAddress: stashAddress.toString(),
-              commission: accountsInfo[i].validatorPrefs.commission.toNumber() / 10000000,
-              nominators: [],
-              historicalData: {
-                points: [],
-                slashes: []
-              }
-            });
-          }
-
-          // Get Era Points and Slashes historical data for node
-          let eraPointsHistory = await api.derive.staking.stakerPoints(node.stashAddress, true);
-          let slashesHistory = await api.derive.staking.ownSlashes(node.stashAddress, true);
-
-          // Get account exposure for node
-          let exposure = accountsInfo[i].exposure.toJSON();
-
-          // Check node status (validator or candidate) and update it with the new data
-          if (sessionValidators.some(sv => sv.toString() === node.stashAddress)) {
-            node.status = 1;
-            node.authoredBlocks = await api.query.imOnline.authoredBlocks(currentSessionIndex, node.stashAddress).then(authoredBlocks => authoredBlocks.toNumber());
-            node.points = eraPointsHistory[eraPointsHistory.length - 1].points.toNumber();
-            node.heartbeats = heartbeats[node.stashAddress].hasMessage;
-          } else {
-            node.status = 2;
-            node.authoredBlocks = 0;
-            node.points = 0;
-            node.heartbeats = false;
-          }
-
-          // Check the number of slashes for node
-          node.downTimeSlashCounter84Eras = slashesHistory.filter(item => item.total.toNumber() > 0).length;
-
-          // Check is node elected for next session or not
-          node.nextSessionElected = nextElected.find(item => item.toString() === node.stashAddress) !== undefined;
-
-          // Reset node nominators list and total stake value
-          node.nominators = [];
-          node.stakeTotal = "0";
-
-          // Update node's own stake
-          node.stakeOwn = exposure.own;
-
-          // Add node's own stash as a nominator and add it's stake to totalStake
-          node.nominators.push({
-            address: node.stashAddress,
-            stake: exposure.own
-          });
-          node.stakeTotal = String(JSBI.add(JSBI.BigInt(exposure.own), JSBI.BigInt(node.stakeTotal)));
-
-          // Add node nominators and update total stake
-          let nominatorsTotalStake = JSBI.BigInt("0");
-          exposure.others.forEach(nominator => {
-            node.nominators.push({
-              address: nominator.who,
-              stake: nominator.value
-            });
-            nominatorsTotalStake = JSBI.add(JSBI.BigInt(nominator.value), nominatorsTotalStake);
-          });
-          node.stakeTotal = String(JSBI.add(JSBI.BigInt(node.stakeTotal), nominatorsTotalStake));
-
-          // Update Era Points historical data
-          eraPointsHistory.forEach(pointsPerEra => {
-            if (!node.historicalData.points.some(ep => ep.era === pointsPerEra.era.toNumber())) {
-              node.historicalData.points.push({
-                era: pointsPerEra.era.toNumber(),
-                points: pointsPerEra.points.toNumber()
-              });
-            }
-          });
-
-          // Update Slashes historical data
-          slashesHistory.forEach(slashesPerEra => {
-            if (!node.historicalData.slashes.some(es => es.era === slashesPerEra.era.toNumber())) {
-              node.historicalData.slashes.push({
-                era: slashesPerEra.era.toNumber(),
-                total: slashesPerEra.total.toNumber()
-              });
-            }
-          });
-
-          // Save node in DB
-          try {
-            await node.save();
-          } catch (err) {
-            console.log(err);
-          }
-        });
+      // Check if state not created yet
+      if (state === null) {
+        state = await db.collection('state').insertOne({}).then(res => res.ops[0]);
       }
 
-      // Clean up DB nodes list
-      let networkNodesStashAddresses = networkNodes.map(node => node.toString());
-      await Validator.find({}, async (err, validators) => {
-        if (err) {
-          console.log(err);
-        }
-        for await (let v of validators) {
-          if (!networkNodesStashAddresses.includes(v.stashAddress)) {
-            v.remove();
-          }
+      // Check node status
+      let { peersNumber, isSyncing } = await api.rpc.system.health().then(health => {
+        return {
+          peersNumber: health.peers.toNumber(),
+          isSyncing: health.isSyncing.toString()
         }
       });
 
+      // Wait synchronization process to finish
+      while(peersNumber === 0 || isSyncing === "true") {
+        console.log('Node is out of sync. Waiting...');
+
+        if (state.isSyncing !== true) {
+          state.isSyncing = true;
+          await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
+        }
+
+        await delay(5000);
+        await api.rpc.system.health().then(health => {
+          peersNumber = health.peers.toNumber();
+          isSyncing = health.isSyncing.toString();
+        });
+      }
+
+      // Synchronization complete
+      if (state.isSyncing !== false) {
+        state.isSyncing = false;
+        await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
+      }
+
       resolve();
     } catch (err) {
       reject(err);
@@ -293,50 +158,235 @@ function updateNodesData(api) {
   });
 }
 
-function updateNodesIdentities(api) {
+function updateNetworkData(blockNumber, eraIndex, sessionIndex) {
+  return new Promise(async (resolve, reject) => {
+
+    try {
+      // Update DB with the actual network data
+      let state = await db.collection('state').findOne();
+      state.block = blockNumber;
+      state.activeEra = eraIndex;
+      state.sessionIndex = sessionIndex;
+      await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
+
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+
+  });
+}
+
+function updateNodesData(eraIndex, sessionIndex) {
+  return new Promise(async (resolve, reject) => {
+
+    try {
+      if (lastSessionProcessed === sessionIndex) {
+        // Update data for block proposers only
+        if (blockAuthors.length > 0) {
+
+          let authorsList = blockAuthors.splice(0, blockAuthors.length);
+
+          // Collect required data
+          let [heartbeats, currentNodePoints] = await Promise.all([
+            api.derive.imOnline.receivedHeartbeats(),
+            api.query.staking.erasRewardPoints(eraIndex)
+          ]);
+
+          for await (let blockAuthor of authorsList) {
+            await db.collection('validators').findOne({ stashAddress: blockAuthor }).then(async node => {
+              if (node !== null) {
+                node.authoredBlocks = await api.query.imOnline.authoredBlocks(sessionIndex, node.stashAddress).then(authoredBlocks => authoredBlocks.toNumber());
+                node.points = currentNodePoints.toJSON().individual[node.stashAddress];
+                node.heartbeats = heartbeats[node.stashAddress].hasMessage;
+                await db.collection('validators').updateOne({ "_id": node._id }, { "$set": node });
+              }
+            });
+          }
+        }
+      } else {
+        // Do the full update only if session index was changed
+
+        // Collect required data
+        let [sessionValidators, heartbeats, nextElected, networkNodes, currentNodePoints] = await Promise.all([
+          api.query.session.validators(),
+          api.derive.imOnline.receivedHeartbeats(),
+          api.derive.staking.nextElected(),
+          api.derive.staking.stashes(),
+          api.query.staking.erasRewardPoints(eraIndex)
+        ]);
+
+        // Update app state (validators, validator slots and candidates number) on session change
+        let state = await db.collection('state').findOne();
+        state.activeValidators = sessionValidators.length;
+        state.candidates = networkNodes.length - sessionValidators.length;
+        state.validatorSlots = await api.query.staking.validatorCount().then(validatorCount => validatorCount.toNumber());
+        await db.collection('state').updateOne({ "_id": state._id }, { "$set": state });
+
+        // Collect the accounts information for all network nodes
+        let accountsInfo = await Promise.all(networkNodes.map(candidate => api.derive.staking.account(candidate)));
+
+        // Update data for every network node
+        for await (let [i, stashAddress] of networkNodes.entries()) {
+
+          // Find the node in DB or create the new one
+          await db.collection('validators').findOne({ stashAddress: stashAddress.toString() }).then(async node => {
+            if (node === null) {
+              node = {
+                controlAddress: accountsInfo[i].controllerId.toString(),
+                stashAddress: stashAddress.toString(),
+                commission: accountsInfo[i].validatorPrefs.commission.toNumber() / 10000000,
+                nominators: [],
+                historicalData: {
+                  points: [],
+                  slashes: []
+                }
+              }
+              node = await db.collection('validators').insertOne(node).then(res => res.ops[0]);
+            }
+
+            // Get account exposure for node
+            let exposure = accountsInfo[i].exposure.toJSON();
+
+            // Check node status (validator or candidate) and update it with the new data
+            if (sessionValidators.some(sv => sv.toString() === node.stashAddress)) {
+              node.status = 1;
+              node.authoredBlocks = await api.query.imOnline.authoredBlocks(sessionIndex, node.stashAddress).then(authoredBlocks => authoredBlocks.toNumber());
+              node.points = currentNodePoints.toJSON().individual[stashAddress.toString()];
+              node.heartbeats = heartbeats[node.stashAddress].hasMessage;
+            } else {
+              node.status = 2;
+              node.authoredBlocks = 0;
+              node.points = 0;
+              node.heartbeats = false;
+            }
+
+            // Check is node elected for next session or not
+            node.nextSessionElected = nextElected.find(item => item.toString() === node.stashAddress) !== undefined;
+
+            // Reset node nominators list and total stake value
+            node.nominators = [];
+            node.stakeTotal = "0";
+
+            // Update node's own stake
+            node.stakeOwn = String(exposure.own);
+
+            // Add node's own stash as a nominator and add it's stake to totalStake
+            node.nominators.push({
+              address: node.stashAddress,
+              stake: exposure.own
+            });
+            node.stakeTotal = String(JSBI.add(JSBI.BigInt(exposure.own), JSBI.BigInt(node.stakeTotal)));
+
+            // Add node nominators and update total stake
+            let nominatorsTotalStake = JSBI.BigInt("0");
+            exposure.others.forEach(nominator => {
+              node.nominators.push({
+                address: nominator.who,
+                stake: nominator.value
+              });
+              nominatorsTotalStake = JSBI.add(JSBI.BigInt(nominator.value), nominatorsTotalStake);
+            });
+            node.stakeTotal = String(JSBI.add(JSBI.BigInt(node.stakeTotal), nominatorsTotalStake));
+
+            if (lastEraProcessed !== eraIndex) {
+
+              // Get Era Points and Slashes historical data for node
+              let eraPointsHistory = await api.derive.staking.stakerPoints(node.stashAddress, true);
+              let slashesHistory = await api.derive.staking.ownSlashes(node.stashAddress, true);
+
+              // Update Era Points historical data
+              eraPointsHistory.forEach(pointsPerEra => {
+                if (!node.historicalData.points.some(ep => ep.era === pointsPerEra.era.toNumber())) {
+                  node.historicalData.points.push({
+                    era: pointsPerEra.era.toNumber(),
+                    points: pointsPerEra.points.toNumber()
+                  });
+                }
+              });
+
+              // Update Slashes historical data
+              slashesHistory.forEach(slashesPerEra => {
+                if (!node.historicalData.slashes.some(es => es.era === slashesPerEra.era.toNumber())) {
+                  node.historicalData.slashes.push({
+                    era: slashesPerEra.era.toNumber(),
+                    total: slashesPerEra.total.toNumber()
+                  });
+                }
+              });
+            }
+
+            await db.collection('validators').updateOne({ "_id": node._id }, { "$set": node });
+          });
+        }
+
+        // Clean up DB nodes list
+        let networkNodesStashAddresses = networkNodes.map(node => node.toString());
+        let nodesCursor = await db.collection('validators').find();
+
+        while (await nodesCursor.hasNext()) {
+          let node = await nodesCursor.next();
+
+          if (!networkNodesStashAddresses.includes(node.stashAddress)) {
+            db.collection('validators').deleteOne({ stashAddress: node.stashAddress });
+          }
+        }
+
+        lastSessionProcessed = sessionIndex;
+        lastEraProcessed = eraIndex;
+      }
+
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+
+  });
+}
+
+function updateNodesIdentities() {
   return new Promise(async (resolve, reject) => {
 
     try {
 
       // Get all nodes stored in DB
-      await Validator.find({}, async (err, nodes) => {
-        if (err) {
-          console.log(err);
-        }
+      let nodesCursor = await db.collection('validators').find();
+
+      while (await nodesCursor.hasNext()) {
+        let node = await nodesCursor.next();
 
         // Collect the identities for the currently saved nodes
-        let identities = await Promise.all(nodes.map(node => api.query.identity.identityOf(node.stashAddress)));
+        let identity = await api.query.identity.identityOf(node.stashAddress);
 
-        // Update identity for nodes
-        for await (let [i, node] of nodes.entries()) {
-          node.info = new Map();
-          if (!identities[i]['isEmpty']) {
-            for await (let [identityKey, identityValue] of identities[i]._raw.info) {
-              if (!identityValue['isEmpty']) {
-                node.info.set(identityKey, identityValue._raw.toString());
+        node.info = new Map();
+        if (!identity['isEmpty']) {
+          for await (let [identityKey, identityValue] of identity._raw.info) {
+            if (!identityValue['isEmpty']) {
+              node.info.set(identityKey, identityValue._raw.toString());
 
-                // Save node icon
-                if (identityKey === 'image') {
-                  let url = hexToString(identityValue._raw.toString());
+              // Save node icon
+              if (identityKey === 'image') {
+                let url = hexToString(identityValue._raw.toString());
 
-                  await axios.get(url, {
-                      responseType: 'arraybuffer'
-                    })
-                    .then(async response => {
-                      node.icon = Buffer.from(response.data, 'binary').toString('base64');
-                    })
-                    .catch(err => {
-                      console.log(err.message);
-                    });
-                }
+                await axios.get(url, {
+                  responseType: 'arraybuffer'
+                })
+                  .then(async response => {
+                    node.icon = Buffer.from(response.data, 'binary').toString('base64');
+                  })
+                  .catch(err => {
+                    console.log(err.message);
+                  });
               }
             }
           }
-          node.save();
         }
 
-        resolve();
-      });
+        // Update node identity
+        await db.collection('validators').updateOne({ "_id": node._id }, { "$set": node });
+      }
+
+      resolve();
     } catch (err) {
       reject(err);
     }

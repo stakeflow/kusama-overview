@@ -24,8 +24,8 @@
                   <div class="group">
                     <p v-if="node.info !== undefined && node.info.display !== undefined" class="name">{{ hexToString(node.info.display) }}</p>
                     <p v-else class="name">{{ $h.minimizeString(node.stashAddress, 5) }}</p>
-                    <p class="nodeStatus">
-                      <i :class="$h.getNodeStatusClass(node.status)"></i> {{ $h.getNodeStatusText(node.status) }}
+                    <p class="nodeStatus" :class="$h.getNodeStatusClass(node.status)">
+                      <i class="fas fa-circle"></i> {{ $h.getNodeStatusText(node.status) }}
                     </p>
                   </div>
                 </div>
@@ -202,7 +202,7 @@
             <router-link :to="`/validators/${node.stashAddress}`" v-else class="nameLink">-</router-link>
             <router-link :to="`/validators/${node.stashAddress}`" class="stashLink">{{ $h.minimizeString(node.stashAddress, 7) }}</router-link>
           </td>
-          <td><i :class="$h.getNodeStatusClass(node.status)"></i> {{ $h.getNodeStatusText(node.status) }}</td>
+          <td class="nodeStatus" :class="$h.getNodeStatusClass(node.status)"><i class="fas fa-circle"></i> {{ $h.getNodeStatusText(node.status) }}</td>
           <td>{{ node.commission }}%</td>
           <td>
             <p class="totalStake">{{ $h.formatNumber($h.convert(node.stakeTotal), 2) }} <span class="pale">KSM</span></p>

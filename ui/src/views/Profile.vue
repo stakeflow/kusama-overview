@@ -39,8 +39,8 @@
                 </tr>
                 <tr>
                   <td>Status</td>
-                  <td>
-                    <i :class="$h.getNodeStatusClass(node.status)"></i>
+                  <td class="nodeStatus" :class="$h.getNodeStatusClass(node.status)">
+                    <i class="fas fa-circle"></i>
                     {{ $h.getNodeStatusText(node.status) }}
                   </td>
                 </tr>

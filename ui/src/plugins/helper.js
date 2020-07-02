@@ -19,13 +19,9 @@ export default {
       getNodeStatusClass(statusCode) {
         switch (Number(statusCode)) {
           case 1:
-            return 'fas fa-circle statusActiveValidator';
+            return 'statusActiveValidator';
           case 2:
-            return 'fas fa-circle statusCandidate';
-          case 3:
-            return 'fas fa-stop statusValidatorOff';
-          case 4:
-            return 'fas fa-times statusOffline';
+            return 'statusCandidate';
           default:
             return '';
         }
@@ -37,10 +33,6 @@ export default {
             return 'Validator';
           case 2:
             return 'Candidate';
-          case 3:
-            return 'Candidate Off';
-          case 4:
-            return 'Node Offline';
           default:
             return 'Unknown status';
         }

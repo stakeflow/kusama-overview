@@ -7,7 +7,7 @@
     "start": "node ./src/index.js"
   },
   "dependencies": {
-    "@polkadot/api": "^1.18.1",
+    "@polkadot/api": "^1.22.1",
     "axios": "^0.19.2",
     "delay": "^4.3.0",
     "dotenv": "^8.2.0",

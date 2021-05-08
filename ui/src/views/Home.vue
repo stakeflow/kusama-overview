@@ -19,12 +19,13 @@ import NodesList from '../components/NodesList.vue';
 
 export default {
 
-  metaInfo: {
-    title: 'Kusama Overview',
-    htmlAttrs: {
-      lang: 'en',
-      amp: true
-    }
+  metaInfo() {
+    return {
+      title: 'Kusama Overview – Validators Explorer for Kusama Network',
+      htmlAttrs: {
+        lang: 'en'
+      }
+    };
   },
 
   components: {
